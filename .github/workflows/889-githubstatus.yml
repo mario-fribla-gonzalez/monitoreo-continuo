@@ -1,0 +1,66 @@
+name: Status Servicio GitHub
+on:
+  workflow_call:
+
+jobs:
+  _githubstatus:
+    runs-on: windows-latest
+    steps:
+      - name: Ejecuta GitHub Status
+        continue-on-error: true
+        id: ejecutastatussrv
+        shell: powershell
+        run: |
+          $statusrv    = 1
+          $lststatusrv = ""
+          # Define el URI para la solicitud.
+          $uri = "https://www.githubstatus.com/api/v2/components.json" 
+          # Invoca la solicitud web.
+          $response = Invoke-WebRequest -Uri $uri -Method GET -Headers $headers -UseBasicParsing
+          $result = $response.Content | ConvertFrom-Json
+          foreach ( $srv in $result.components ) {
+            if ( $srv.status -ne "operational" ) {
+              Write-Host "[Error] Status Servicio GitHub " $srv.name  ":" $srv.status -ForegroundColor Red
+              $statusrv = 0
+              $lststatusrv   = $lststatusrv + "@[Error] " + $srv.name + ": " + $srv.status
+            } else {
+               Write-Host "[Info] Status Servicio GitHub " $srv.name  ":" $srv.status
+               #$lststatusrv = $lststatusrv + " [Info] " + $srv.name + ": " + $srv.status
+            }
+          }
+          "statussrv=$statusrv"      | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "lststatusrv=$lststatusrv" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          
+      - name: envia_notificacion
+        shell: powershell
+        run: |
+          $resultping     = "${{ steps.ejecutastatussrv.outputs.statussrv || 0 }}"
+          $lstrunner      = "${{ steps.ejecutastatussrv.outputs.lststatusrv }}"
+          $arrlstservicio = $lstrunner -split "@"
+          $arrlstservicio = $lstrunner.Replace("@","<BR>")
+          $webhookUrl     = "${{ secrets.TEAMS_WEBHOOK_URL }}"
+          echo "ALERTA STATUS Servicio GitHub: $resultping (0:Error / 1: Todo OK)"
+          if ( [int]$resultping -eq 0 ) {
+            foreach ( $srv in $arrlstservicio ) {
+              Write-Host $srv  }
+            $emailSmtpServer     = "smtp.gmail.com"
+            $emailSmtpServerPort = "587"
+            $emailSmtpUser       = "${{ vars.SENDMAIL_NOTIFY }}"
+            $emailSmtpPass       = "xxxxxxxxxxxx"
+            $emailMessage        = New-Object System.Net.Mail.MailMessage
+            $emailMessage.From   = "noreply_status@runner.mfriblag" #"${{ vars.SENDMAIL_NOTIFY }}"
+            $sendmail            = "${{ vars.LIST_SENDMAIL_NOTIFY }}"
+            $lstsendmail         = $sendmail -split ","
+            foreach ( $user in $lstsendmail ) { 
+              $emailMessage.To.Add( $user )
+            }
+            $emailMessage.Subject    = "ALERTA CI/CD: Status Servicio GitHub..."
+            $emailMessage.IsBodyHtml = $true
+            $body                    ="<p><strong>Estimados:</strong></p><BR><p><strong>Se informa Status del Servicio GitHub:</strong></p><BR><p>Satus Servicio:</p><BR><p> $arrlstservicio</p><BR><p>----</p><BR><p> DEVOPS Mario Fribla Gonzalez</p>"
+            $emailMessage.Body       = $body
+            $SMTPClient              = New-Object System.Net.Mail.SmtpClient( $emailSmtpServer , $emailSmtpServerPort )
+            $SMTPClient.EnableSsl    = $true
+            $SMTPClient.Credentials  = New-Object System.Net.NetworkCredential( $emailSmtpUser , $emailSmtpPass );
+            $SMTPClient.Send( $emailMessage )            
+            echo "##[info] Notificacion Enviada..."          
+            }

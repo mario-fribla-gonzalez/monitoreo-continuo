@@ -1,0 +1,74 @@
+name: ping runner
+on:
+  workflow_call:
+
+jobs:
+  _ping:
+    runs-on: windows-latest
+    steps:
+      - name: Ejecuta Ping
+        continue-on-error: true
+        id: ejecutaping
+        shell: powershell
+        run: |
+          Write-Host "##[neutral] Status Runner..." -ForegroundColor Green
+          $statusrunner    = 1
+          $lststatusrunner = ""
+          # Define el URI para la solicitud.
+          $uri = "https://api.github.com/orgs/mario-fribla-gonzalez/actions/runners"
+          # Crea una tabla hash para los encabezados personalizados.
+          $headers = @{
+              "Accept" = "application/vnd.github+json"
+              "Authorization" = "Bearer ghp_XXXXXXXXXXXXXXXXXXXXXX
+              "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          # Invoca la solicitud web con los encabezados definidos.
+          $response = Invoke-WebRequest -Uri $uri -Method GET -Headers $headers -UseBasicParsing
+          # Display the response content
+          $result = $response.Content | ConvertFrom-Json
+          foreach ( $rnnr in $result.runners ) {
+            if ( $rnnr.status -ne "online" ) {
+              Write-Host "[Error] Status Runner" $rnnr.name  ":" $rnnr.status -ForegroundColor Red
+              $statusrunner = 0
+              $lststatusrunner = $lststatusrunner + "@[Error] " + $rnnr.name + ": " + $rnnr.status
+            } else {
+               Write-Host "[Info] Status Runner" $rnnr.name  ":" $rnnr.status
+               #$lststatusrunner = $lststatusrunner + " [Info] " + $rnnr.name + ": " + $rnnr.status
+            }
+          }
+          "statusping=$statusrunner"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "lststatusping=$lststatusrunner" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: envia_notificacion
+        shell: powershell
+        run: |
+          $resultping   = "${{ steps.ejecutaping.outputs.statusping || 0 }}"
+          $lstrunner    = "${{ steps.ejecutaping.outputs.lststatusping }}"
+          $arrlstrunner = $lstrunner -split "@"
+          $arrlstrunner = $lstrunner.Replace("@","<BR>")
+          $webhookUrl   = "${{ secrets.TEAMS_WEBHOOK_URL }}"
+          echo "ALERTA: STATUS Ping Runner: $resultping (0:Error / 1: Todo OK)"
+          if ( [int]$resultping -eq 0 ) {
+            foreach ( $rnnr in $arrlstrunner ) {
+              Write-Host $rnnr  }
+            $emailSmtpServer     = "smtp.gmail.com"
+            $emailSmtpServerPort = "587"
+            $emailSmtpUser       = "${{ vars.SENDMAIL_NOTIFY }}"
+            $emailSmtpPass       = "xxxxxxxxxxxx"
+            $emailMessage        = New-Object System.Net.Mail.MailMessage
+            $emailMessage.From   = "noreply_status@runner.mfriblag" #"${{ vars.SENDMAIL_NOTIFY }}"
+            $sendmail            = "${{ vars.LIST_SENDMAIL_NOTIFY }}"
+            $lstsendmail         = $sendmail -split ","
+            foreach ( $user in $lstsendmail ) { 
+              $emailMessage.To.Add( $user )
+            }
+            $emailMessage.Subject    = "ALERTA CI/CD: Status Runner..."
+            $emailMessage.IsBodyHtml = $true
+            $body                    ="<p><strong>Estimados:</strong></p><BR><p><strong>Se informa Status de Runner:</strong></p><BR><p>Lista de Runner en ERROR:</p><BR><p> $arrlstrunner</p><BR><p>----</p><BR><p> DEVOPS Mario Fribla Gonzalez</p>"
+            $emailMessage.Body       = $body
+            $SMTPClient              = New-Object System.Net.Mail.SmtpClient( $emailSmtpServer , $emailSmtpServerPort )
+            $SMTPClient.EnableSsl    = $true
+            $SMTPClient.Credentials  = New-Object System.Net.NetworkCredential( $emailSmtpUser , $emailSmtpPass );
+            $SMTPClient.Send( $emailMessage )            
+            echo "##[info] Notificacion Enviada..."
+          }

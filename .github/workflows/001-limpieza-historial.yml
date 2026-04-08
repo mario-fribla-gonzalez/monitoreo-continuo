@@ -1,0 +1,146 @@
+name: 'Limpieza Manual de Historial de Archivos (múltiples)'
+# La rama a modificar no debe estar protegida
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: 'Repositorio destino en formato owner/repo (ej: mario-fribla-gonzalez/nombrepositorio)'
+        required: true
+        type: string
+      ref:
+        description: 'Rama a limpiar (ej: main, test)'
+        required: true
+        type: string
+        default: 'main'
+      file_paths:
+        description: |
+          'Rutas completas de los archivos a limpiar (separadas por comas o saltos de línea).
+           Ej: src/carpeta/archivo.etc, otra/ruta/archivo2.etc'
+        required: true
+        type: string
+
+jobs:
+  clean-files-history:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: '1) Checkout del repositorio objetivo (con historial completo)'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.ref }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }} # PAT con scope repo
+          fetch-depth: 0
+
+      - name: '2) Instalar git-filter-repo'
+        run: |
+          pip install --upgrade pip
+          pip install git-filter-repo
+
+      - name: '3) Configurar usuario de Git para el commit'
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+          echo "✅ Configuración Git aplicada:"
+          git config --get user.name
+          git config --get user.email
+
+      - name: '4) Preparar lista de archivos y validar existencia'
+        env:
+          FILES_RAW: ${{ inputs.file_paths }}
+          TARGET_REF: ${{ inputs.ref }}
+          TARGET_REPO: ${{ inputs.repo }}
+        run: |
+          set -e
+
+          # Normalizar separadores: comas -> nueva línea, quitar espacios extra
+          echo "Procesando input de archivos..."
+          FILES_CLEANED=$(printf "%s" "$FILES_RAW" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d')
+
+          if [ -z "$FILES_CLEANED" ]; then
+            echo "Error: no se proporcionaron rutas válidas en 'file_paths'."
+            exit 1
+          fi
+
+          # Volcar archivo temporal con la lista
+          echo "$FILES_CLEANED" > /tmp/files_to_clean.list
+          echo "Archivos a procesar:"
+          cat /tmp/files_to_clean.list
+
+          # Validar existencia en working tree (HEAD en la rama checkout)
+          MISSING=0
+          while IFS= read -r f; do
+            if [ ! -f "$f" ]; then
+              echo "Error: El archivo '$f' NO existe en la rama '${TARGET_REF}' del repo '${TARGET_REPO}'."
+              MISSING=1
+            fi
+          done < /tmp/files_to_clean.list
+
+          if [ "$MISSING" -eq 1 ]; then
+            echo "Corrige las rutas y vuelve a ejecutar."
+            exit 1
+          fi
+
+      - name: '5) Resguardar versiones actuales de los archivos'
+        run: |
+          set -e
+          mkdir -p /tmp/backup
+          while IFS= read -r f; do
+            # crear carpeta destino para preservar estructura
+            dest="/tmp/backup/${f}"
+            mkdir -p "$(dirname "$dest")"
+            cp "$f" "$dest"
+            echo "Resguardado: $f -> $dest"
+          done < /tmp/files_to_clean.list
+
+      - name: '6) Ejecutar git-filter-repo para purgar los archivos del historial'
+        run: |
+          set -e
+          # Construir argumentos para git-filter-repo
+          ARGS=()
+          while IFS= read -r f; do
+            ARGS+=(--path "$f")
+          done < /tmp/files_to_clean.list
+
+          echo "Ejecutando git-filter-repo --invert-paths para las rutas:"
+          printf '%s\n' "${ARGS[@]}"
+
+          # Ejecutar la purga (se eliminarán las rutas especificadas del historial)
+          git filter-repo "${ARGS[@]}" --invert-paths
+
+      - name: '7) Restaurar las versiones finales de los archivos y commitear'
+        run: |
+          set -e
+          while IFS= read -r f; do
+            backup="/tmp/backup/${f}"
+            if [ -f "$backup" ]; then
+              mkdir -p "$(dirname "$f")"
+              mv "$backup" "$f"
+              git add "$f"
+              echo "Restaurado y agregado: $f"
+            else
+              echo "Advertencia: no se encontró backup para $f, saltando restore."
+            fi
+          done < /tmp/files_to_clean.list
+
+          git commit -m "chore(security): restaurar archivos sin historial sensible" || echo "No hay cambios para commitear."
+
+      - name: '8) Asegurar URL del remoto (autenticada)'
+        run: |
+          # Si ya existe origin, reemplazar; si no, agregar
+          if git remote | grep -q '^origin$'; then
+            git remote set-url origin "https://x-access-token:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/${{ inputs.repo }}"
+          else
+            git remote add origin "https://x-access-token:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/${{ inputs.repo }}"
+          fi
+          echo "URL remoto configurada sobre origin."
+
+      - name: '9) Forzar push del historial limpio'
+        run: |
+          set -e
+          echo "Forzando push del historial limpio a la rama: ${{ inputs.ref }}"
+          git push origin HEAD:${{ inputs.ref }} --force

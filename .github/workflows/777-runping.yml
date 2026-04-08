@@ -1,0 +1,21 @@
+name: Valida Runner BCI-Seguros
+
+on:
+  #schedule:
+  #  - cron: "*/30 * * * *"
+
+  workflow_dispatch:
+  
+jobs:
+  ejecuta-ping:
+    uses: ./.github/workflows/888_ping.yml
+    permissions:
+      contents: read
+      actions: read
+
+  ejecuta-githubstatus:
+    uses: ./.github/workflows/889_githubstatus.yml
+    permissions:
+      contents: read
+      actions: read
+      

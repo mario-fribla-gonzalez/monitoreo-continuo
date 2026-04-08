@@ -1,0 +1,27 @@
+name: Limpia Los Run WorkFlow
+
+on:
+  #schedule:
+    #- cron: "50 * * * *"
+    
+  workflow_dispatch:
+  
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Limpia Los Run WorkFlow
+        uses: dmvict/clean-workflow-runs@v1.0.0
+        with:
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          run_conclusions: |
+            failure
+            timed_out
+            cancelled
+            skipped            
+            success
+          save_period: 2
+          save_min_runs_number: 0
+          dry: false # Cambia a true para una ejecución de prueba
+
+          # repo: ${{ github.repository }}
