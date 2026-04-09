@@ -1,4 +1,4 @@
-name: Valida Runner BCI-Seguros
+name: Valida Runner Activos en Repositorio
 
 on:
   #schedule:
